@@ -16,10 +16,10 @@ const SPIN_PRICE = 1.0
 
 // Шансы как в твоем старом коде (в сумме 100):
 const WHEEL_PRIZES = [
-	{ emoji: '🧸', name: 'Мишка', price: 0.1, chance: 99.9 },
-	{ emoji: '📅', name: 'Календарь', price: 1.5, chance: 0.1 },
-	// Остальные пока можно добавить позже (с шансом > 0)
+  { emoji: '🐸', name: 'Пепе', price: 0.0, chance: 50 },
+  { emoji: '🍑', name: 'Персик', price: 0.0, chance: 50 },
 ]
+
 
 function pickWeightedPrize() {
 	const total = WHEEL_PRIZES.reduce((s, p) => s + p.chance, 0)
@@ -358,3 +358,4 @@ app.listen(PORT, HOST, () => {
 	console.log(`🚀 Backend running on ${HOST}:${PORT}`)
 	console.log(`📦 Static root: ${ROOT_DIR}`)
 })
+
