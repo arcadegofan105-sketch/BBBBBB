@@ -1,5 +1,6 @@
 // ===== CONFIG =====
-const API_URL = '/api'
+const API_URL = '/api/'
+
 
 // ===== TELEGRAM INTEGRATION =====
 const tg = window.Telegram?.WebApp
@@ -846,5 +847,6 @@ if (withdrawBtn)
 document.addEventListener('DOMContentLoaded', () => {
 	initTONConnect()
 })
+
 
 
