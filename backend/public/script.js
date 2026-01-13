@@ -446,11 +446,16 @@ function initCrashCanvas() {
 }
 
 function generateCrashPoint() {
-	const rand = Math.random() * 100
-	if (rand < 99) return 1.01 + Math.random() * 0.4
-	if (rand < 99.9) return 1.41 + Math.random() * 1.59
-	return 3.0 + Math.random() * 7.0
+  const r = Math.random(); // 0..1
+  if (r < 0.8) {
+    // 80%: 10x .. 100x
+    return 10 + Math.random() * 90;
+  } else {
+    // 20%: 101x .. 1000x
+    return 101 + Math.random() * 899;
+  }
 }
+
 
 function drawCrashGraph() {
 	if (!crashCtx || !crashCanvas) return
@@ -811,3 +816,4 @@ if (withdrawBtn)
 document.addEventListener('DOMContentLoaded', () => {
 	initTONConnect()
 })
+
