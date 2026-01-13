@@ -434,40 +434,50 @@ let crashBetAmount = 0
 let crashAnimFrame = null
 let crashStartTime = null
 
+// ✅ Настройка темпа: 10x достигается примерно за 30 секунд
+const CRASH_TARGET_X = 10
+const CRASH_TARGET_T = 30 // seconds
+const CRASH_K = Math.log(CRASH_TARGET_X) / CRASH_TARGET_T
+
 function initCrashCanvas() {
-	if (!crashCanvas) return
+	if (!crashCanvas || !crashCtx) return
 	const dpr = window.devicePixelRatio || 1
 	const rect = crashCanvas.getBoundingClientRect()
-	crashCanvas.width = rect.width * dpr
-	crashCanvas.height = rect.height * dpr
-	if (crashCtx) crashCtx.scale(dpr, dpr)
+
+	crashCanvas.width = Math.floor(rect.width * dpr)
+	crashCanvas.height = Math.floor(rect.height * dpr)
+
+	// ✅ не накапливаем scale при повторных вызовах
+	crashCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
 	crashCanvas.style.width = rect.width + 'px'
 	crashCanvas.style.height = rect.height + 'px'
 }
 
 function generateCrashPoint() {
-  const r = Math.random(); // 0..1
-  if (r < 0.8) {
-    // 80%: 10x .. 100x
-    return 10 + Math.random() * 90;
-  } else {
-    // 20%: 101x .. 1000x
-    return 101 + Math.random() * 899;
-  }
+	const r = Math.random()
+	if (r < 0.8) {
+		// 80%: 10x..100x
+		return 10 + Math.random() * 90
+	}
+	// 20%: 101x..1000x
+	return 101 + Math.random() * 899
 }
-
 
 function drawCrashGraph() {
 	if (!crashCtx || !crashCanvas) return
 	const rect = crashCanvas.getBoundingClientRect()
 	const w = rect.width
 	const h = rect.height
+
 	crashCtx.clearRect(0, 0, w, h)
+
 	const gradient = crashCtx.createLinearGradient(0, 0, w, h)
 	gradient.addColorStop(0, 'rgba(56, 189, 248, 0.05)')
 	gradient.addColorStop(1, 'rgba(139, 92, 246, 0.05)')
 	crashCtx.fillStyle = gradient
 	crashCtx.fillRect(0, 0, w, h)
+
 	crashCtx.strokeStyle = 'rgba(148, 163, 184, 0.1)'
 	crashCtx.lineWidth = 1
 	for (let i = 0; i < 5; i++) {
@@ -477,24 +487,26 @@ function drawCrashGraph() {
 		crashCtx.lineTo(w, y)
 		crashCtx.stroke()
 	}
+
 	if (crashState === 'playing' || crashState === 'crashed') {
-		const progress = Math.min(
-			(crashMultiplier - 1) / Math.max((crashPoint || 10) - 1, 1),
-			1
-		)
+		const maxY = Math.max(crashPoint || 10, 2)
+		const progress = Math.min((crashMultiplier - 1) / Math.max(maxY - 1, 1), 1)
+
 		crashCtx.strokeStyle = crashState === 'crashed' ? '#ef4444' : '#38bdf8'
 		crashCtx.lineWidth = 3
 		crashCtx.beginPath()
 		crashCtx.moveTo(0, h)
+
 		for (let i = 0; i <= progress * 100; i++) {
 			const x = (i / 100) * w
 			const t = i / 100
 			const mult = 1 + t * (crashMultiplier - 1)
-			const y = h - (mult - 1) * (h / Math.max(crashPoint || 10, 2))
+			const y = h - (mult - 1) * (h / maxY)
 			if (i === 0) crashCtx.moveTo(x, y)
 			else crashCtx.lineTo(x, y)
 		}
 		crashCtx.stroke()
+
 		if (crashState === 'playing') {
 			crashCtx.shadowBlur = 20
 			crashCtx.shadowColor = '#38bdf8'
@@ -505,16 +517,15 @@ function drawCrashGraph() {
 }
 
 function updateCrashMultiplier() {
-	if (!crashMultiplierEl) return
-	crashMultiplierEl.textContent = crashMultiplier.toFixed(2) + 'x'
+	if (crashMultiplierEl) crashMultiplierEl.textContent = crashMultiplier.toFixed(2) + 'x'
 	if (crashBetAmount > 0 && crashPotentialWinEl) {
-		const potential = (crashBetAmount * crashMultiplier).toFixed(2)
-		crashPotentialWinEl.textContent = potential + ' TON'
+		crashPotentialWinEl.textContent = (crashBetAmount * crashMultiplier).toFixed(2) + ' TON'
 	}
 }
 
 function startCrash() {
 	if (crashState !== 'idle') return
+
 	crashBetAmount = parseFloat(crashBetInput?.value)
 	if (isNaN(crashBetAmount) || crashBetAmount < 0.1) {
 		showError('Минимальная ставка: 0.1 TON')
@@ -524,30 +535,42 @@ function startCrash() {
 		showError('Недостаточно TON для ставки.')
 		return
 	}
+
 	balance -= crashBetAmount
 	updateBalanceUI()
+
 	crashPoint = generateCrashPoint()
 	crashMultiplier = 1.0
 	crashState = 'playing'
 	crashStartTime = Date.now()
-	if (crashStatusEl) crashStatusEl.textContent = 'Летим! 🚀'
+
+	if (crashStatusEl) {
+		crashStatusEl.textContent = 'Летим! 🚀'
+		crashStatusEl.style.color = '#38bdf8'
+	}
 	if (crashPlayBtn) crashPlayBtn.disabled = true
 	if (crashCashoutBtn) crashCashoutBtn.disabled = false
 	if (crashMultiplierEl) crashMultiplierEl.classList.remove('crashed')
-	if (crashCurrentBetEl)
-		crashCurrentBetEl.textContent = crashBetAmount.toFixed(2) + ' TON'
+	if (crashCurrentBetEl) crashCurrentBetEl.textContent = crashBetAmount.toFixed(2) + ' TON'
+
+	updateCrashMultiplier()
+	drawCrashGraph()
 	animateCrash()
 }
 
 function animateCrash() {
 	if (crashState !== 'playing') return
 	const elapsed = (Date.now() - crashStartTime) / 1000
-	crashMultiplier = 1 + elapsed * 0.2
+
+	// ✅ экспоненциальный рост (ускоряется), 10x примерно за 30 сек
+	crashMultiplier = Math.exp(CRASH_K * elapsed)
+
 	if (crashMultiplier >= crashPoint) {
 		crashMultiplier = crashPoint
 		endCrash(false)
 		return
 	}
+
 	updateCrashMultiplier()
 	drawCrashGraph()
 	crashAnimFrame = requestAnimationFrame(animateCrash)
@@ -567,27 +590,31 @@ function endCrash(cashedOut) {
 		cancelAnimationFrame(crashAnimFrame)
 		crashAnimFrame = null
 	}
+
 	if (crashPlayBtn) crashPlayBtn.disabled = false
 	if (crashCashoutBtn) crashCashoutBtn.disabled = true
-	if (cashedOut) {
-		if (crashStatusEl) {
+
+	if (crashStatusEl) {
+		if (cashedOut) {
 			crashStatusEl.textContent = '✅ Выведено!'
 			crashStatusEl.style.color = '#10b981'
-		}
-	} else {
-		if (crashStatusEl) {
+		} else {
 			crashStatusEl.textContent = '💥 Крах!'
 			crashStatusEl.style.color = '#ef4444'
 		}
-		if (crashMultiplierEl) crashMultiplierEl.classList.add('crashed')
 	}
+
+	if (!cashedOut && crashMultiplierEl) crashMultiplierEl.classList.add('crashed')
+
 	updateCrashMultiplier()
 	drawCrashGraph()
+
 	setTimeout(() => {
 		crashState = 'idle'
 		crashMultiplier = 1.0
 		crashBetAmount = 0
 		crashPoint = null
+
 		if (crashStatusEl) {
 			crashStatusEl.textContent = 'Ожидание...'
 			crashStatusEl.style.color = '#94a3b8'
@@ -606,11 +633,14 @@ if (crashPlayBtn) crashPlayBtn.addEventListener('click', startCrash)
 if (crashCashoutBtn) crashCashoutBtn.addEventListener('click', cashoutCrash)
 
 window.addEventListener('resize', () => {
-	if (crashCanvas) {
-		initCrashCanvas()
-		drawCrashGraph()
-	}
+	initCrashCanvas()
+	drawCrashGraph()
 })
+
+// при первом показе экрана тоже полезно инициализировать
+initCrashCanvas()
+drawCrashGraph()
+
 
 // ===== INIT =====
 async function init() {
@@ -816,4 +846,5 @@ if (withdrawBtn)
 document.addEventListener('DOMContentLoaded', () => {
 	initTONConnect()
 })
+
 
