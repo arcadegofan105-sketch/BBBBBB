@@ -961,66 +961,60 @@ body {
 		font-size: 56px;
 	}
 }
-/* ===== Deposit modal styles ===== */
-.hidden { display: none !important; }
 
-#deposit-modal .modal-content {
-  max-width: 360px;
-  width: 92%;
-  padding: 22px 18px;
-  gap: 10px;
+/* ✅ ADD: input styles for withdraw modal */
+.modal-input {
+	width: 100%;
+	padding: 14px 18px;
+	border: none;
+	border-radius: 16px;
+
+	background: rgba(15, 23, 42, 0.85);
+	box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.2), 0 10px 25px rgba(0, 0, 0, 0.3);
+
+	font-size: 18px;
+	font-weight: 600;
+	color: #e5e7eb;
+
+	transition: box-shadow 0.2s ease;
 }
 
-#deposit-modal #deposit-amount {
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: none;
-  outline: none;
-  background: rgba(15, 23, 42, 0.92);
-  color: #e5e7eb;
-  font-size: 18px;
-  font-weight: 700;
-  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.35), 0 12px 28px rgba(0, 0, 0, 0.45);
+.modal-input:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.5), 0 12px 30px rgba(0, 0, 0, 0.4);
 }
 
-#deposit-modal #deposit-amount:focus {
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.55), 0 16px 34px rgba(0, 0, 0, 0.55);
+.modal-hint {
+	width: 100%;
+	font-size: 12px;
+	opacity: 0.9;
+	color: #94a3b8;
+	text-align: center;
+	margin-top: -4px;
 }
 
-#deposit-modal .modal-text {
-  min-height: 20px;
+.wallet-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(129, 140, 248, 0.35);
+  color: rgba(229, 231, 235, 0.9);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
-#deposit-modal .modal-text.ok {
-  color: #22c55e;
-  opacity: 1;
+/* === NEW: иконки-подарки картинками (вместо эмодзи) === */
+.gift-icon {
+  width: 34px;
+  height: 34px;
+  display: inline-block;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
 }
 
-#deposit-modal .modal-text.err {
-  color: #fca5a5;
-  opacity: 1;
-}
-
-
-.hidden { display: none !important; }
-
-#deposit-modal .modal-text.ok { color: #22c55e; }
-#deposit-modal .modal-text.err { color: #fca5a5; }
-
-#deposit-modal #deposit-amount{
-  width: 100%;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(148,163,184,.25);
-  background: rgba(2,6,23,.7);
-  color: #e5e7eb;
-  font-size: 18px;
-  font-weight: 700;
-  outline: none;
-}
-#deposit-modal #deposit-amount::placeholder{
-  color: rgba(226,232,240,.6);
-}
-
-
+/* размеры под места, где показываем */
+.prize-emoji .gift-icon { width: 28px; height: 28px; }
+.inventory-item-emoji .gift-icon { width: 32px; height: 32px; }
+.modal-prize-emoji .gift-icon { width: 72px; height: 72px; }

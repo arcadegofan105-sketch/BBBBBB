@@ -8,8 +8,6 @@
     />
     <title>Колесо фортуны</title>
     <link rel="stylesheet" href="style.css" />
-    <!-- TON Connect UI SDK -->
-    <script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
   </head>
   <body>
     <div class="app">
@@ -105,7 +103,6 @@
           <div class="crash-container">
             <!-- Game Canvas -->
             <div class="crash-game-area">
-              <!-- FIX: было "anvas" -->
               <canvas id="crash-canvas"></canvas>
               <div class="crash-multiplier" id="crash-multiplier">1.00x</div>
               <div class="crash-status" id="crash-status">Ожидание...</div>
@@ -115,14 +112,7 @@
             <div class="crash-controls">
               <div class="crash-input-group">
                 <label>Ставка (TON)</label>
-                <input
-                  type="number"
-                  id="crash-bet-input"
-                  placeholder="0.1"
-                  min="0.1"
-                  step="0.1"
-                  value="1"
-                />
+                <input type="number" id="crash-bet-input" placeholder="0.1" min="0.1" step="0.1" value="1" />
               </div>
 
               <button id="crash-play-btn" class="crash-btn crash-btn-play">
@@ -156,7 +146,11 @@
           </div>
 
           <div class="promo-block">
-            <input id="promo-input" type="text" placeholder="Введите промокод" />
+            <input
+              id="promo-input"
+              type="text"
+              placeholder="Введите промокод"
+            />
             <button id="promo-apply">Активировать</button>
           </div>
 
@@ -170,58 +164,60 @@
         </section>
 
         <!-- Экран ПРОФИЛЬ -->
-        <section id="screen-profile" class="screen">
-          <div class="profile-header">
-            <div class="profile-avatar"></div>
-            <div class="profile-main">
-              <div class="profile-name">Nick</div>
-              <div class="profile-id">ID: тестовый пользователь</div>
-            </div>
-          </div>
+<section id="screen-profile" class="screen">
+  <div class="profile-header">
+    <div class="profile-avatar"></div>
+    <div class="profile-main">
+      <div class="profile-name">Nick</div>
+      <div class="profile-id">ID: тестовый пользователь</div>
+    </div>
+  </div>
 
-          <div class="profile-balance-card">
-            <div class="profile-balance-top">
-              <span>Общий баланс</span>
-              <span class="ton-chip">
-                <span class="balance-icon">⚡</span>
-                <span id="balance-value-3">5</span> TON
-              </span>
-            </div>
+  <div class="profile-balance-card">
+    <div class="profile-balance-top">
+      <span>Общий баланс</span>
+      <span class="ton-chip">
+        <span class="balance-icon">⚡</span>
+        <span id="balance-value-3">5</span> TON
+      </span>
+    </div>
+<div class="profile-balance-bottom">
+  <button id="deposit-btn" class="action-btn action-green">
+    Депозит TON
+  </button>
+  <button id="withdraw-btn" class="action-btn action-blue">
+    Вывод TON
+  </button>
+</div>
 
-            <!-- ✅ TonConnect кнопка (можно оставить тут, под балансом) -->
-            <div id="tonconnect-button" style="margin: 12px 0;"></div>
+<div class="wallet-note">
+  Прежде чем пополнять баланс, нужно сначала привязать (подключить) кошелёк.
+</div>
 
-            <div class="profile-balance-bottom">
-              <button id="deposit-btn" class="action-btn action-green">
-                Депозит TON
-              </button>
-              <button id="withdraw-btn" class="action-btn action-blue">
-                Вывод TON
-              </button>
-            </div>
-          </div>
 
-          <div class="inventory-section">
-            <div class="inventory-title">Инвентарь подарков</div>
-            <div id="inventory-list" class="inventory-list">
-              <!-- Динамически будут добавляться подарки -->
-              <div class="inventory-empty">У вас пока нет подарков</div>
-            </div>
-          </div>
+  <!-- ✅ Контейнер TonConnect (кнопка появится тут) -->
+  <div id="ton-connect" style="margin-top: 10px;"></div>
 
-          <div class="ref-card">
-            <div class="ref-title">Реферальная программа</div>
-            <div class="ref-text">
-              Делимся частью дохода с активными игроками. Ниже можно будет
-              создать свой промокод для друзей.
-            </div>
-            <button class="action-btn action-outline" disabled>
-              Создать промокод (скоро)
-            </button>
-          </div>
-        </section>
+  <div class="inventory-section">
+    <div class="inventory-title">Инвентарь подарков</div>
+    <div id="inventory-list" class="inventory-list">
+      <!-- Динамически будут добавляться подарки -->
+      <div class="inventory-empty">У вас пока нет подарков</div>
+    </div>
+  </div>
+
+  <div class="ref-card">
+    <div class="ref-title">Реферальная программа</div>
+    <div class="ref-text">
+      Делимся частью дохода с активными игроками. Ниже можно будет
+      создать свой промокод для друзей.
+    </div>
+    <button class="action-btn action-outline" disabled>
+      Создать промокод (скоро)
+    </button>
+  </div>
+</section>
       </main>
-
       <nav class="bottom-nav">
         <button class="nav-btn active" data-target="wheel">
           🎰
@@ -263,38 +259,47 @@
         </div>
       </div>
 
-      <!-- ✅ Модалка депозита TON (ввод суммы) -->
-      <div id="deposit-modal" class="modal hidden">
+      <!-- ✅ Модалка вывода TON -->
+      <div id="withdraw-modal" class="modal">
         <div class="modal-content">
-          <div class="modal-title">Пополнение TON</div>
+          <div class="modal-title">Вывод TON</div>
+          <div class="modal-text">Укажи сумму вывода (минимум 5 TON).</div>
 
           <input
-            id="deposit-amount"
+            id="withdraw-amount-input"
+            class="modal-input"
             type="number"
-            inputmode="decimal"
-            min="0.01"
+            min="5"
             step="0.01"
-            placeholder="Сумма TON"
+            placeholder="Например: 5"
+            inputmode="decimal"
           />
 
+          <div id="withdraw-hint" class="modal-hint">Баланс: <span id="withdraw-balance-hint">0</span> TON</div>
+
           <div class="modal-buttons">
-            <button id="deposit-confirm-btn" class="modal-btn modal-btn-keep">
-              Пополнить
-            </button>
-            <button id="deposit-cancel-btn" class="modal-btn modal-btn-sell">
+            <button id="withdraw-cancel" class="modal-btn modal-btn-sell" type="button">
               Отмена
             </button>
+            <button id="withdraw-confirm" class="modal-btn modal-btn-keep" type="button">
+              Подтвердить
+            </button>
           </div>
-
-          <div id="deposit-status" class="modal-text"></div>
         </div>
       </div>
     </div>
 
     <!-- ✅ TELEGRAM WEB APP SDK -->
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-    <!-- Ваш основной скрипт -->
-    <script src="script.js"></script>
+<!-- ✅ TON CONNECT UI -->
+<script src="https://unpkg.com/@tonconnect/ui@latest/dist/tonconnect-ui.min.js"></script>
+
+<!-- Ваш основной скрипт -->
+<script src="script.js"></script>
+
   </body>
 </html>
+
+
+
