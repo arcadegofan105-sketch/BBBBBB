@@ -1,361 +1,475 @@
-const express = require('express')
-const path = require('path')
-const db = require('./db')
+import express from "express";
+import crypto from "crypto";
+import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
+import { beginCell, Cell } from "@ton/core";
 
-const app = express()
+const app = express();
+app.use(express.json());
 
-const PORT = Number(process.env.PORT) || 3001
-const HOST = '0.0.0.0'
-const ROOT_DIR = path.resolve(__dirname, '..')
-
-app.use(express.json({ limit: '1mb' }))
-app.use(express.static(ROOT_DIR))
-
-// ===== GAME CONFIG (must match front expectations) =====
-const SPIN_PRICE = 1.0
-
-// Шансы как в твоем старом коде (в сумме 100):
-const WHEEL_PRIZES = [
-  { emoji: '🐸', name: 'Пепе', price: 0.0, chance: 50 },
-  { emoji: '🍑', name: 'Персик', price: 0.0, chance: 50 },
-]
-
-
-function pickWeightedPrize() {
-	const total = WHEEL_PRIZES.reduce((s, p) => s + p.chance, 0)
-	let r = Math.random() * total
-	for (const p of WHEEL_PRIZES) {
-		r -= p.chance
-		if (r <= 0) return { emoji: p.emoji, name: p.name, price: Number(p.price) }
-	}
-	const last = WHEEL_PRIZES[WHEEL_PRIZES.length - 1]
-	return { emoji: last.emoji, name: last.name, price: Number(last.price) }
+const BOT_TOKEN = process.env.BOT_TOKEN;
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN is not set");
+  process.exit(1);
 }
 
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID; // 7995955451
+if (!ADMIN_CHAT_ID) {
+  console.error("❌ ADMIN_CHAT_ID is not set");
+  process.exit(1);
+}
+
+// ✅ Deposit config (Railway Variables)
+const TON_DEPOSIT_ADDRESS = String(process.env.TON_DEPOSIT_ADDRESS || "").replace(/\s+/g, "").trim();
+if (!TON_DEPOSIT_ADDRESS) {
+  console.error("❌ TON_DEPOSIT_ADDRESS is not set");
+  process.exit(1);
+}
+
+const TONCENTER_API_KEY = process.env.TONCENTER_API_KEY;
+if (!TONCENTER_API_KEY) {
+  console.error("❌ TONCENTER_API_KEY is not set");
+  process.exit(1);
+}
+
+const TONCENTER_BASE = "https://toncenter.com/api/v2";
+const MIN_DEPOSIT_TON = 0.1;
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// фронт лежит в backend/public
+const PUBLIC_DIR = path.join(__dirname, "public");
+const INDEX_PATH = path.join(PUBLIC_DIR, "index.html");
+
+console.log("PUBLIC_DIR:", PUBLIC_DIR);
+console.log(
+  "PUBLIC_FILES:",
+  fs.existsSync(PUBLIC_DIR) ? fs.readdirSync(PUBLIC_DIR).slice(0, 50) : "NO_DIR"
+);
+console.log("INDEX_EXISTS:", fs.existsSync(INDEX_PATH));
+
+app.use(express.static(PUBLIC_DIR));
+app.get("/", (req, res) => res.sendFile(INDEX_PATH));
+
+// ===== Telegram initData validation =====
+function validateInitData(initData) {
+  if (!initData || typeof initData !== "string") throw new Error("initData required");
+
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash) throw new Error("hash missing");
+  params.delete("hash");
+
+  const pairs = [];
+  for (const [k, v] of params.entries()) pairs.push(`${k}=${v}`);
+  pairs.sort();
+  const dataCheckString = pairs.join("\n");
+
+  const secretKey = crypto.createHmac("sha256", "WebAppData").update(BOT_TOKEN).digest();
+  const calculatedHash = crypto.createHmac("sha256", secretKey).update(dataCheckString).digest("hex");
+  if (calculatedHash !== hash) throw new Error("invalid initData hash");
+
+  const authDate = Number(params.get("auth_date") || 0);
+  if (!authDate) throw new Error("auth_date missing");
+  const now = Math.floor(Date.now() / 1000);
+  if (now - authDate > 24 * 60 * 60) throw new Error("initData expired");
+
+  const userStr = params.get("user");
+  if (!userStr) throw new Error("user missing");
+  const user = JSON.parse(userStr);
+  if (!user?.id) throw new Error("user id missing");
+
+  return user;
+}
+
+function auth(req, res, next) {
+  try {
+    req.tgUser = validateInitData(req.body?.initData);
+    next();
+  } catch (e) {
+    res.status(401).json({ error: e.message || "unauthorized" });
+  }
+}
+
+// ===== Telegram notify helper (sendMessage) =====
+async function sendAdminMessage(text) {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: ADMIN_CHAT_ID,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    console.error("❌ Telegram sendMessage failed:", data);
+    throw new Error("Не удалось отправить сообщение админу");
+  }
+  return data;
+}
+
+// ===== TON Center helper (getTransactions) =====
+async function toncenterGetTransactions(address, limit = 25) {
+  const url = new URL(`${TONCENTER_BASE}/getTransactions`);
+  url.searchParams.set("address", address);
+  url.searchParams.set("limit", String(limit));
+
+  const res = await fetch(url.toString(), {
+    headers: { "X-API-Key": TONCENTER_API_KEY },
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data?.ok === false) {
+    throw new Error(data?.error || `TON Center error`);
+  }
+  return data?.result || [];
+}
+
+// ===== Deposit payload helpers (BOC comment) =====
+function makeCommentPayloadBase64(text) {
+  // Text comment: op=0 (32 bits) + UTF-8 string
+  return beginCell().storeUint(0, 32).storeStringTail(text).endCell().toBoc().toString("base64");
+}
+
+function tryDecodeCommentFromBodyBase64(bodyBase64) {
+  try {
+    const cell = Cell.fromBoc(Buffer.from(bodyBase64, "base64"))[0];
+    const s = cell.beginParse();
+    const op = s.loadUint(32);
+    if (op !== 0) return "";
+    return s.loadStringTail();
+  } catch {
+    return "";
+  }
+}
+
+// В toncenter иногда комментарий может быть не в in_msg.message.
+// Правильно: msg_data.body = base64 BOC, который надо декодить.
+function extractIncomingComment(tx) {
+  const inMsg = tx?.in_msg || {};
+
+  const msgText = inMsg?.message;
+  if (typeof msgText === "string" && msgText.trim()) return msgText.trim();
+
+  const body = inMsg?.msg_data?.body;
+  if (typeof body === "string" && body.trim()) {
+    const decoded = tryDecodeCommentFromBodyBase64(body.trim());
+    if (decoded) return decoded.trim();
+  }
+
+  return "";
+}
+
+// ===== In-memory storage (до БД) =====
+const users = new Map();
+function getOrCreateUser(id) {
+  if (!users.has(id)) {
+    users.set(id, {
+      balance: 0,
+      inventory: [],
+      usedPromos: [],
+    });
+  }
+  return users.get(id);
+}
+
+// ===== In-memory pending deposits (до БД) =====
+const pendingDeposits = new Map();
+// depositId -> { userId, amount, comment, createdAt, credited }
+
+function makeDepositId() {
+  return crypto.randomBytes(12).toString("hex");
+}
+
+// ===== Promo config =====
+const PROMOS = {
+  Free05: 0.5,
+  Admintestcodesss: 50,
+};
+
 // ===== API =====
+app.post("/api/me", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
+  res.json({ balance: u.balance, inventory: u.inventory });
+});
 
-app.get('/api/health', (req, res) => {
-	res.json({
-		ok: true,
-		service: 'wheelsbot-backend',
-		time: new Date().toISOString(),
-	})
-})
+// /api/spin не трогаем: всегда мишка
+app.post("/api/spin", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-// Получить или создать профиль пользователя + инвентарь
-app.get('/api/me', async (req, res) => {
-	try {
-		const telegramId = String(req.query.telegramId || '').trim()
-		if (!telegramId)
-			return res.status(400).json({ error: 'telegramId required' })
+  if (u.balance < 1) return res.status(400).json({ error: "Недостаточно средств" });
+  u.balance = Number((u.balance - 1).toFixed(2));
 
-		const found = await db.query(
-			`SELECT id, telegram_id, username, first_name, balance, created_at
-       FROM users
-       WHERE telegram_id = $1`,
-			[telegramId]
-		)
+  res.json({ prize: { emoji: "🧸", name: "Мишка", price: 0.1 }, newBalance: u.balance });
+});
 
-		let user = found.rows[0]
+// ===== Promo apply =====
+app.post("/api/promo/apply", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-		if (!user) {
-			const created = await db.query(
-				`INSERT INTO users (telegram_id, username, first_name, balance)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, telegram_id, username, first_name, balance, created_at`,
-				[telegramId, `User_${telegramId}`, null, 5.0]
-			)
-			user = created.rows[0]
-		}
+  const code = String(req.body?.code || "").trim();
+  if (!code) return res.status(400).json({ error: "Введите промокод" });
 
-		const inv = await db.query(
-			`SELECT id, name, emoji, price, created_at
-       FROM inventory_items
-       WHERE user_id = $1
-       ORDER BY id DESC`,
-			[user.id]
-		)
+  const amount = PROMOS[code];
+  if (!amount) return res.status(400).json({ error: "Промокод не найден" });
 
-		return res.json({
-			telegramId: user.telegram_id,
-			username: user.username,
-			firstName: user.first_name,
-			balance: Number(user.balance),
-			inventory: inv.rows.map(x => ({
-				id: x.id,
-				name: x.name,
-				emoji: x.emoji,
-				price: Number(x.price),
-				createdAt: x.created_at,
-			})),
-		})
-	} catch (err) {
-		console.error('GET /api/me error:', err)
-		return res.status(500).json({ error: 'Internal server error' })
-	}
-})
+  if (u.usedPromos.includes(code)) {
+    return res.status(400).json({ error: "Этот промокод уже использован" });
+  }
 
-// Крутить колесо (списываем 1 TON, выбираем приз, логируем игру + транзакцию)
-app.post('/api/spin', async (req, res) => {
-	const telegramId = String(req.body?.telegramId || '').trim()
-	if (!telegramId) return res.status(400).json({ error: 'telegramId required' })
+  u.usedPromos.push(code);
+  u.balance = Number((u.balance + amount).toFixed(2));
 
-	const client = await db.pool.connect()
-	try {
-		await client.query('BEGIN')
+  res.json({ newBalance: u.balance, amount });
+});
 
-		// 1) user lock (чтобы два спина параллельно не ушли в минус)
-		const ures = await client.query(
-			`SELECT id, balance
-       FROM users
-       WHERE telegram_id = $1
-       FOR UPDATE`,
-			[telegramId]
-		)
+// ===== Prize keep/sell =====
+app.post("/api/prize/keep", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-		if (ures.rowCount === 0) {
-			await client.query('ROLLBACK')
-			return res
-				.status(404)
-				.json({ error: 'User not found. Call /api/me first.' })
-		}
+  const prize = req.body?.prize;
+  if (!prize || typeof prize !== "object") {
+    return res.status(400).json({ error: "prize required" });
+  }
 
-		const userId = ures.rows[0].id
-		const balance = Number(ures.rows[0].balance)
+  const emoji = String(prize.emoji || "🎁");
+  const name = String(prize.name || "Подарок");
+  const price = Number(prize.price || 0);
 
-		if (balance < SPIN_PRICE) {
-			await client.query('ROLLBACK')
-			return res.status(400).json({ error: 'Insufficient balance' })
-		}
+  u.inventory.push({ emoji, name, price });
 
-		// 2) choose prize
-		const prize = pickWeightedPrize()
+  res.json({ ok: true, inventory: u.inventory });
+});
 
-		// 3) decrement balance
-		const newBalance = Number((balance - SPIN_PRICE).toFixed(2))
+app.post("/api/prize/sell", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-		await client.query(
-			`UPDATE users
-       SET balance = $1, updated_at = now()
-       WHERE id = $2`,
-			[newBalance, userId]
-		)
+  const prize = req.body?.prize;
+  if (!prize || typeof prize !== "object") {
+    return res.status(400).json({ error: "prize required" });
+  }
 
-		// 4) games log
-		await client.query(
-			`INSERT INTO games (user_id, type, bet, result, prize)
-       VALUES ($1, 'wheel', $2, $3, $4)`,
-			[userId, SPIN_PRICE, 0.0, JSON.stringify(prize)]
-		)
+  const price = Number(prize.price || 0);
+  if (!Number.isFinite(price) || price <= 0) {
+    return res.status(400).json({ error: "Этот подарок нельзя продать" });
+  }
 
-		// 5) transactions log
-		await client.query(
-			`INSERT INTO transactions (user_id, type, amount, description)
-       VALUES ($1, 'spin', $2, $3)`,
-			[userId, -SPIN_PRICE, 'Spin wheel']
-		)
+  // Если idx передан — удаляем из инвентаря
+  const idxRaw = req.body?.idx;
+  if (idxRaw !== undefined && idxRaw !== null && idxRaw !== "") {
+    const idx = Number(idxRaw);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= u.inventory.length) {
+      return res.status(400).json({ error: "Некорректный индекс предмета" });
+    }
 
-		await client.query('COMMIT')
-		return res.json({ prize, newBalance })
-	} catch (err) {
-		await client.query('ROLLBACK')
-		console.error('POST /api/spin error:', err)
-		return res.status(500).json({ error: 'Internal server error' })
-	} finally {
-		client.release()
-	}
-})
+    const item = u.inventory[idx];
+    if (!item) return res.status(400).json({ error: "Предмет не найден" });
 
-// Оставить приз (добавить в inventory)
-app.post('/api/prize/keep', async (req, res) => {
-	try {
-		const telegramId = String(req.body?.telegramId || '').trim()
-		const prize = req.body?.prize
+    // защита: чтобы нельзя было “продать” несуществующий предмет по idx
+    if (String(item.name) !== String(prize.name) || Number(item.price || 0) !== price) {
+      return res.status(400).json({ error: "Предмет не найден" });
+    }
 
-		if (!telegramId)
-			return res.status(400).json({ error: 'telegramId required' })
-		if (!prize || !prize.name || !prize.emoji)
-			return res.status(400).json({ error: 'prize required' })
+    u.inventory.splice(idx, 1);
+  }
 
-		const u = await db.query(`SELECT id FROM users WHERE telegram_id = $1`, [
-			telegramId,
-		])
-		if (u.rowCount === 0)
-			return res.status(404).json({ error: 'User not found' })
+  u.balance = Number((u.balance + price).toFixed(2));
+  res.json({ newBalance: u.balance, inventory: u.inventory });
+});
 
-		const userId = u.rows[0].id
+// ===== Withdraw TON (списываем + заявка админу) =====
+app.post("/api/withdraw/ton", auth, async (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-		await db.query(
-			`INSERT INTO inventory_items (user_id, name, emoji, price)
-       VALUES ($1, $2, $3, $4)`,
-			[
-				userId,
-				String(prize.name),
-				String(prize.emoji),
-				Number(prize.price || 0),
-			]
-		)
+  const amount = Number(req.body?.amount || 0);
+  if (!Number.isFinite(amount)) return res.status(400).json({ error: "Некорректная сумма" });
 
-		return res.json({ success: true })
-	} catch (err) {
-		console.error('POST /api/prize/keep error:', err)
-		return res.status(500).json({ error: 'Internal server error' })
-	}
-})
+  const MIN_WITHDRAW = 5;
+  if (amount < MIN_WITHDRAW) return res.status(400).json({ error: `Минимум ${MIN_WITHDRAW} TON` });
+  if (amount > u.balance) return res.status(400).json({ error: "Недостаточно средств" });
 
-// Продать приз (начислить цену приза на баланс + транзакция)
-app.post('/api/prize/sell', async (req, res) => {
-	const telegramId = String(req.body?.telegramId || '').trim()
-	const prize = req.body?.prize
+  // списываем сразу
+  u.balance = Number((u.balance - amount).toFixed(2));
 
-	if (!telegramId) return res.status(400).json({ error: 'telegramId required' })
-	if (!prize || !prize.name)
-		return res.status(400).json({ error: 'prize required' })
+  const username = req.tgUser?.username ? `@${req.tgUser.username}` : "(no username)";
+  const fullName = [req.tgUser?.first_name, req.tgUser?.last_name].filter(Boolean).join(" ");
 
-	const amount = Number(prize.price || 0)
+  const text =
+    `💸 Заявка на вывод TON\n` +
+    `Пользователь: ${fullName || "User"} ${username}\n` +
+    `ID: ${id}\n` +
+    `Сумма: ${amount.toFixed(2)} TON\n` +
+    `Баланс после списания: ${Number(u.balance || 0).toFixed(2)} TON`;
 
-	const client = await db.pool.connect()
-	try {
-		await client.query('BEGIN')
+  try {
+    await sendAdminMessage(text);
+  } catch (e) {
+    u.balance = Number((u.balance + amount).toFixed(2));
+    return res.status(500).json({ error: e.message || "Ошибка уведомления" });
+  }
 
-		const ures = await client.query(
-			`SELECT id, balance
-       FROM users
-       WHERE telegram_id = $1
-       FOR UPDATE`,
-			[telegramId]
-		)
+  return res.json({ ok: true, newBalance: u.balance });
+});
 
-		if (ures.rowCount === 0) {
-			await client.query('ROLLBACK')
-			return res.status(404).json({ error: 'User not found' })
-		}
+// ===== Withdraw Gift (удаляем из инвентаря + заявка админу) =====
+app.post("/api/withdraw/gift", auth, async (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-		const userId = ures.rows[0].id
-		const balance = Number(ures.rows[0].balance)
-		const newBalance = Number((balance + amount).toFixed(2))
+  const idx = Number(req.body?.idx);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= u.inventory.length) {
+    return res.status(400).json({ error: "Некорректный предмет" });
+  }
 
-		await client.query(
-			`UPDATE users
-       SET balance = $1, updated_at = now()
-       WHERE id = $2`,
-			[newBalance, userId]
-		)
+  const item = u.inventory[idx];
+  u.inventory.splice(idx, 1);
 
-		await client.query(
-			`INSERT INTO transactions (user_id, type, amount, description)
-       VALUES ($1, 'prize_sell', $2, $3)`,
-			[userId, amount, `Sold ${String(prize.name)}`]
-		)
+  const username = req.tgUser?.username ? `@${req.tgUser.username}` : "(no username)";
+  const fullName = [req.tgUser?.first_name, req.tgUser?.last_name].filter(Boolean).join(" ");
 
-		await client.query('COMMIT')
-		return res.json({ success: true, newBalance })
-	} catch (err) {
-		await client.query('ROLLBACK')
-		console.error('POST /api/prize/sell error:', err)
-		return res.status(500).json({ error: 'Internal server error' })
-	} finally {
-		client.release()
-	}
-})
+  const text =
+    `🎁 Заявка на вывод подарка\n` +
+    `Пользователь: ${fullName || "User"} ${username}\n` +
+    `ID: ${id}\n` +
+    `Подарок: ${(item?.emoji || "🎁")} ${item?.name || "Подарок"}\n` +
+    `Оценка: ${Number(item?.price || 0).toFixed(2)} TON`;
 
-// Применить промокод (одноразово на пользователя)
-app.post('/api/promo/apply', async (req, res) => {
-	const telegramId = String(req.body?.telegramId || '').trim()
-	const codeRaw = String(req.body?.code || '').trim()
+  try {
+    await sendAdminMessage(text);
+  } catch (e) {
+    u.inventory.splice(idx, 0, item);
+    return res.status(500).json({ error: e.message || "Ошибка уведомления" });
+  }
 
-	if (!telegramId) return res.status(400).json({ error: 'telegramId required' })
-	if (!codeRaw) return res.status(400).json({ error: 'code required' })
+  return res.json({ ok: true, inventory: u.inventory });
+});
 
-	const code = codeRaw.toUpperCase()
+// ===== Deposit (auto) =====
+app.post("/api/deposit/info", auth, (req, res) => {
+  res.json({ address: TON_DEPOSIT_ADDRESS, minDeposit: MIN_DEPOSIT_TON });
+});
 
-	// Промокоды (позже перенесем в таблицу, пока в коде)
-	const PROMOS = {
-		FREEEFORADMIN: 100,
-		GIFT1: 1,
-		GIFT5: 5,
-		BONUS: 2,
-	}
+// создаём ожидаемый депозит с уникальным комментом + payloadBase64 (BOC)
+app.post("/api/deposit/create", auth, (req, res) => {
+  const userId = String(req.tgUser.id);
+  const amount = Number(req.body?.amount || 0);
 
-	const amount = PROMOS[code]
-	if (!amount) return res.status(400).json({ error: 'Неверный промокод' })
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: "Некорректная сумма" });
+  }
+  if (amount < MIN_DEPOSIT_TON) {
+    return res.status(400).json({ error: `Минимум ${MIN_DEPOSIT_TON} TON` });
+  }
 
-	const client = await db.pool.connect()
-	try {
-		await client.query('BEGIN')
+  const depositId = makeDepositId();
+  const comment = `dep_${userId}_${depositId}`;
+  const payloadBase64 = makeCommentPayloadBase64(comment);
 
-		const ures = await client.query(
-			`SELECT id, balance
-       FROM users
-       WHERE telegram_id = $1
-       FOR UPDATE`,
-			[telegramId]
-		)
+  pendingDeposits.set(depositId, {
+    userId,
+    amount: Number(amount.toFixed(2)),
+    comment,
+    createdAt: Date.now(),
+    credited: false,
+  });
 
-		if (ures.rowCount === 0) {
-			await client.query('ROLLBACK')
-			return res.status(404).json({ error: 'User not found' })
-		}
+  res.json({
+    depositId,
+    address: TON_DEPOSIT_ADDRESS,
+    amount: Number(amount.toFixed(2)),
+    comment,
+    payloadBase64,
+  });
+});
 
-		const userId = ures.rows[0].id
-		const balance = Number(ures.rows[0].balance)
+// проверяем входящие и начисляем
+app.post("/api/deposit/check", auth, async (req, res) => {
+  const userId = String(req.tgUser.id);
+  const depositId = String(req.body?.depositId || "");
 
-		// проверка "уже использовал"
-		const already = await client.query(
-			`SELECT 1 FROM promo_redemptions WHERE user_id = $1 AND code = $2`,
-			[userId, code]
-		)
+  const dep = pendingDeposits.get(depositId);
+  if (!dep || dep.userId !== userId) return res.status(404).json({ error: "deposit not found" });
+  if (dep.credited) {
+    const u = getOrCreateUser(userId);
+    return res.json({ ok: true, credited: true, newBalance: u.balance });
+  }
 
-		if (already.rowCount > 0) {
-			await client.query('ROLLBACK')
-			return res.status(400).json({ error: 'Промокод уже использован' })
-		}
+  let txs = [];
+  try {
+    txs = await toncenterGetTransactions(TON_DEPOSIT_ADDRESS, 25);
+  } catch (e) {
+    return res.status(500).json({ error: e.message || "toncenter error" });
+  }
 
-		const newBalance = Number((balance + amount).toFixed(2))
+  // ищем транзакцию с нашим уникальным комментом (после BOC decode)
+  const found = txs.find((tx) => {
+    const comment = extractIncomingComment(tx);
+    return typeof comment === "string" && comment.includes(dep.comment);
+  });
 
-		await client.query(
-			`UPDATE users
-       SET balance = $1, updated_at = now()
-       WHERE id = $2`,
-			[newBalance, userId]
-		)
+  if (!found) {
+    return res.json({ ok: true, credited: false });
+  }
 
-		await client.query(
-			`INSERT INTO promo_redemptions (user_id, code, amount)
-       VALUES ($1, $2, $3)`,
-			[userId, code, amount]
-		)
+  // ✅ начисляем баланс
+  const u = getOrCreateUser(userId);
+  u.balance = Number((u.balance + dep.amount).toFixed(2));
 
-		await client.query(
-			`INSERT INTO transactions (user_id, type, amount, description)
-       VALUES ($1, 'promo', $2, $3)`,
-			[userId, amount, `Promo code: ${code}`]
-		)
+  dep.credited = true;
+  pendingDeposits.set(depositId, dep);
 
-		await client.query('COMMIT')
-		return res.json({ success: true, amount, newBalance })
-	} catch (err) {
-		await client.query('ROLLBACK')
-		console.error('POST /api/promo/apply error:', err)
-		return res.status(500).json({ error: 'Internal server error' })
-	} finally {
-		client.release()
-	}
-})
+  // уведомление админу (не критично)
+  sendAdminMessage(
+    `✅ Депозит зачислен\nID: ${userId}\nСумма: ${dep.amount.toFixed(2)} TON\nDepositId: ${depositId}`
+  ).catch(() => {});
 
-// ===== PAGES =====
+  return res.json({ ok: true, credited: true, newBalance: u.balance });
+});
 
-app.get('/', (req, res) => {
-	res.sendFile(path.join(ROOT_DIR, 'index.html'))
-})
+// ===== Crash sync (общий баланс) =====
+app.post("/api/crash/bet", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
 
-// fallback (после статики)
-app.get('*', (req, res) => {
-	res.sendFile(path.join(ROOT_DIR, 'index.html'))
-})
+  const amount = Number(req.body?.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "amount required" });
 
-app.listen(PORT, HOST, () => {
-	console.log(`🚀 Backend running on ${HOST}:${PORT}`)
-	console.log(`📦 Static root: ${ROOT_DIR}`)
-})
+  if (u.balance < amount) return res.status(400).json({ error: "Недостаточно средств" });
+
+  u.balance = Number((u.balance - amount).toFixed(2));
+  res.json({ newBalance: u.balance });
+});
+
+app.post("/api/crash/cashout", auth, (req, res) => {
+  const id = String(req.tgUser.id);
+  const u = getOrCreateUser(id);
+
+  const amount = Number(req.body?.amount || 0);
+  if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: "amount required" });
+
+  u.balance = Number((u.balance + amount).toFixed(2));
+  res.json({ newBalance: u.balance });
+});
+
+// fallback: любые не-API роуты -> index.html
+app.get("*", (req, res) => {
+  if (req.path.startsWith("/api")) return res.status(404).json({ error: "Not Found" });
+  res.sendFile(INDEX_PATH);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => console.log("✅ Listening on", PORT));
 
