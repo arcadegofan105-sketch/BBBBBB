@@ -99,8 +99,13 @@ function renderWheel() {
 	const sectorNodes = wheel.querySelectorAll('.sector')
 	sectorNodes.forEach((node, i) => {
 		const s = wheelSectors[i]
-		node.textContent = s ? s.emoji : '❔'
-		node.title = s ? `${s.name} (${s.price} TON)` : ''
+		if (!s) {
+			node.textContent = '❔'
+			return
+		}
+		// Используем giftVisual для картинок Пепе и Персика
+		node.innerHTML = giftVisual(s)
+		node.title = `${s.name} (${s.price} TON)`
 	})
 }
 
@@ -555,3 +560,4 @@ window.addEventListener('resize', () => {
 		drawCrashGraph()
 	}
 })()
+
