@@ -5,13 +5,14 @@ const FULL_ROUNDS = 5
 
 const wheelSectors = [
 	{ emoji: '🧸', name: 'Мишка', price: 0.1 },
-	{ emoji: '🐸', name: 'Пепе', price: 0.0 },
+	{ emoji: '🐸', name: 'Пепе', price: 1500 },      // ← было 0.0, стало 1500
 	{ emoji: '💋', name: 'Губы', price: 0.0 },
 	{ emoji: '📅', name: 'Календарь', price: 1.5 },
 	{ emoji: '🍀', name: 'Клевер', price: 0.0 },
-	{ emoji: '🍑', name: 'Слива', price: 0.0 },
+	{ emoji: '🍑', name: 'Персик', price: 500 },      // ← было 0.0, стало 500 (и "Слива" → "Персик")
 	{ emoji: '🧸', name: 'Мишка', price: 0.1 },
 ]
+
 
 // ===== UI ELEMENTS =====
 const wheel = document.getElementById('wheel')
@@ -543,4 +544,5 @@ window.addEventListener('resize', () => {
 		drawCrashGraph()
 	}
 })()
+
 
