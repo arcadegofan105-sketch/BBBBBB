@@ -141,3 +141,4 @@ canvas.width = 400
 canvas.height = 400
 drawWheel()
 spinBtn.addEventListener('click', spin)
+
