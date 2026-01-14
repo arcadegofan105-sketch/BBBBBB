@@ -5,14 +5,25 @@ const FULL_ROUNDS = 5
 
 const wheelSectors = [
 	{ emoji: '🧸', name: 'Мишка', price: 0.1 },
-	{ emoji: '🐸', name: 'Пепе', price: 1500 },      // ← было 0.0, стало 1500
+	{ emoji: '🐸', name: 'Пепе', price: 1500 },
 	{ emoji: '💋', name: 'Губы', price: 0.0 },
 	{ emoji: '📅', name: 'Календарь', price: 1.5 },
 	{ emoji: '🍀', name: 'Клевер', price: 0.0 },
-	{ emoji: '🍑', name: 'Персик', price: 500 },      // ← было 0.0, стало 500 (и "Слива" → "Персик")
+	{ emoji: '🍑', name: 'Персик', price: 500 },
 	{ emoji: '🧸', name: 'Мишка', price: 0.1 },
 ]
 
+// ===== CUSTOM IMAGES =====
+const GIFT_IMAGES = {
+	'Пепе': 'epepepepe.webp',
+	'Персик': 'epersok.webp',
+}
+
+function giftVisual(item) {
+	const file = GIFT_IMAGES[item?.name]
+	if (file) return `<span class="gift-icon" style="background-image:url('${file}')"></span>`
+	return item?.emoji || '🎁'
+}
 
 // ===== UI ELEMENTS =====
 const wheel = document.getElementById('wheel')
@@ -47,7 +58,7 @@ const inventoryList = document.getElementById('inventory-list')
 
 // ===== STATE =====
 let currentRotation = 0
-let balance = 5 // Стартовый баланс для показа
+let balance = 5
 let inventory = []
 let currentPrize = null
 let isSpinning = false
@@ -63,12 +74,16 @@ function updateBalanceUI() {
 
 function setLastPrizeText(prize) {
 	if (!lastPrizeSpan) return
-	lastPrizeSpan.textContent = prize ? `${prize.emoji} ${prize.name}` : '—'
+	if (!prize) {
+		lastPrizeSpan.textContent = '—'
+		return
+	}
+	lastPrizeSpan.innerHTML = `${giftVisual(prize)} ${prize.name}`
 }
 
 function openModal(prize) {
 	if (!prizeModal) return
-	modalPrizeEmoji.textContent = prize.emoji
+	modalPrizeEmoji.innerHTML = giftVisual(prize)
 	modalPrizeName.textContent = prize.name
 	modalPrizePrice.textContent = Number(prize.price || 0).toFixed(2)
 	prizeModal.classList.add('active')
@@ -103,7 +118,7 @@ function renderInventory() {
 			return `
         <div class="inventory-item" data-idx="${idx}">
           <div class="inventory-item-top">
-            <div class="inventory-item-emoji">${item.emoji || '🎁'}</div>
+            <div class="inventory-item-emoji">${giftVisual(item)}</div>
             <div class="inventory-item-price">${price} TON</div>
           </div>
           <div class="inventory-item-name">${item.name || 'Подарок'}</div>
@@ -182,7 +197,6 @@ async function apiPost(path, body = {}) {
 }
 
 async function spinApi() {
-	// Локальная генерация приза (без сервера)
 	const randomSector = wheelSectors[Math.floor(Math.random() * wheelSectors.length)]
 	return { prize: randomSector, newBalance: balance }
 }
@@ -197,7 +211,6 @@ async function sellPrizeApi(prize) {
 	balance += Number(prize.price || 0)
 	updateBalanceUI()
 	
-	// Удалить из инвентаря если там есть
 	const idx = inventory.findIndex(i => i.name === prize.name && i.emoji === prize.emoji)
 	if (idx >= 0) inventory.splice(idx, 1)
 	renderInventory()
@@ -206,7 +219,6 @@ async function sellPrizeApi(prize) {
 }
 
 async function applyPromoApi(code) {
-	// Заглушка промокода
 	const amount = 1.0
 	balance += amount
 	updateBalanceUI()
@@ -240,10 +252,9 @@ spinButton?.addEventListener('click', async e => {
 	}
 
 	currentPrize = prizeData.prize
-	// Баланс НЕ тратится (бесплатно)
 
 	const sectorIndex = findSectorIndexForPrize(currentPrize)
-	const desiredAngle = 270 // "стрелка" сверху
+	const desiredAngle = 270
 	const current = ((currentRotation % 360) + 360) % 360
 	const base = sectorBaseAngles?.[sectorIndex] ?? 0
 	const delta = (((desiredAngle - base - current) % 360) + 360) % 360
@@ -544,5 +555,3 @@ window.addEventListener('resize', () => {
 		drawCrashGraph()
 	}
 })()
-
-
